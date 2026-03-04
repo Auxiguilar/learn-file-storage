@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -33,8 +35,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	// TODO: implement the upload here
-
 	const maxMemory = 10 << 20
 
 	err = r.ParseMultipartForm(maxMemory)
@@ -43,31 +43,26 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	file, header, err := r.FormFile("thumbnail") // header thing unused
+	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "FormFile error", err)
 		return
 	}
 
-	contentTypeHeader := header.Header.Get("Content-Type")
-	if contentTypeHeader == "" {
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
 		respondWithError(w, http.StatusBadRequest, "No Content-Type Header", nil)
 		return
-	}
-
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "ReadAll error", err)
+	} else if contentType != "image/png" && contentType != "image/jpeg" {
+		respondWithError(w, http.StatusBadRequest, "Invalid Content-Type", nil)
 		return
 	}
 
 	videoMetadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not fetch video metadata", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't fetch video metadata", err)
 		return
 	}
-
-	log.Print(videoMetadata) // debug
 
 	if videoMetadata.UserID != userID {
 		log.Printf("\n%s\n%s", videoMetadata.UserID.String(), userID.String())
@@ -75,17 +70,28 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnails[videoMetadata.ID] = thumbnail{
-		data:      fileData,
-		mediaType: contentTypeHeader, // seems about right?
+	fileType, ok := strings.CutPrefix(contentType, "image/")
+	if !ok {
+		respondWithError(w, http.StatusInternalServerError, "CutPrefix error", nil)
+		return
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		log.Fatal("PORT environment variable is not set")
+	filePath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%s.%s", videoID, fileType))
+	log.Print(filePath)
+	imageFile, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
+		return
 	}
 
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", port, videoMetadata.ID)
+	_, err = io.Copy(imageFile, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save file on disk", err)
+		return
+	}
+
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/%s", cfg.port, filePath)
+
 	videoMetadata.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(videoMetadata)
@@ -93,8 +99,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video metadata", err)
 		return
 	}
-
-	// /TODO
 
 	respondWithJSON(w, http.StatusOK, videoMetadata)
 }
