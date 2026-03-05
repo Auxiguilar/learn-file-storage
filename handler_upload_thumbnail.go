@@ -49,6 +49,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "FormFile error", err)
 		return
 	}
+	defer file.Close()
 
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
@@ -88,6 +89,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
 		return
 	}
+	defer imageFile.Close()
 
 	_, err = io.Copy(imageFile, file)
 	if err != nil {
