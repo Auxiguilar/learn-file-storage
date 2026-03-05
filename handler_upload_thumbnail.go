@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,7 +64,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	if videoMetadata.UserID != userID {
-		log.Printf("\n%s\n%s", videoMetadata.UserID.String(), userID.String())
 		respondWithError(w, http.StatusUnauthorized, "Not the video author", err)
 		return
 	}
@@ -77,7 +75,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	filePath := filepath.Join(cfg.assetsRoot, fmt.Sprintf("%s.%s", videoID, fileType))
-	log.Print(filePath)
 	imageFile, err := os.Create(filePath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
