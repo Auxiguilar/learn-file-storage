@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -78,13 +82,27 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	f.Seek(0, io.SeekStart)
 
+	aspectRatio, err := getVideoAspectRatio(f.Name())
+	videoType := ""
+
+	switch aspectRatio {
+	case "16:9":
+		videoType = "landscape"
+	case "9:16":
+		videoType = "portrait"
+	default:
+		videoType = "other"
+	}
+
+	log.Printf("Aspect ratio: %s\nVideo type: %s", aspectRatio, videoType)
+
 	bytes := make([]byte, 32)
 	rand.Read(bytes)
 	encodedString := hex.EncodeToString(bytes)
 
 	ext, _ := strings.CutPrefix(mediaType, "video/") // fuck this shit
 
-	key := fmt.Sprintf("%s.%s", encodedString, ext)
+	key := fmt.Sprintf("%s/%s.%s", videoType, encodedString, ext)
 
 	putParams := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
@@ -115,4 +133,45 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, videoMetadata)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command(
+		"ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath,
+	)
+
+	// I just wanna check if it's all good...
+	if cmd.Err != nil {
+		return "", cmd.Err // seems about right to me!
+	}
+
+	buf := bytes.Buffer{}
+	cmd.Stdout = &buf
+
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+
+	params := struct {
+		S []struct {
+			Width  float32 `json:"width"`
+			Height float32 `json:"height"`
+		} `json:"streams"`
+	}{}
+
+	err = json.Unmarshal(buf.Bytes(), &params)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Width: %.0f\nHeight: %.0f\n", params.S[0].Width, params.S[0].Height)
+
+	if ratio := int(params.S[0].Width / params.S[0].Height * 9); ratio == 16 {
+		return "16:9", nil
+	} else if ratio := int(params.S[0].Width / params.S[0].Height * 16); ratio == 9 {
+		return "9:16", nil
+	}
+
+	return "other", nil
 }
