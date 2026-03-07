@@ -82,7 +82,22 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	f.Seek(0, io.SeekStart)
 
-	aspectRatio, err := getVideoAspectRatio(f.Name())
+	procFile, err := processVideoForFastStart(f.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Coudln't process video", err)
+		return
+	}
+
+	// am I now ending up wth 2 files in memory?
+	pf, err := os.Open(procFile)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open temp proc file", err)
+		return
+	}
+	defer os.Remove(pf.Name())
+	defer pf.Close()
+
+	aspectRatio, err := getVideoAspectRatio(pf.Name())
 	videoType := ""
 
 	switch aspectRatio {
@@ -106,7 +121,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	putParams := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
-		Body:        f,
+		Body:        pf,
 		ContentType: &mediaType,
 		Key:         &key,
 	}
@@ -140,11 +155,6 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		"ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath,
 	)
 
-	// I just wanna check if it's all good...
-	if cmd.Err != nil {
-		return "", cmd.Err // seems about right to me!
-	}
-
 	buf := bytes.Buffer{}
 	cmd.Stdout = &buf
 
@@ -174,4 +184,19 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	}
 
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	procFilePath := fmt.Sprintf("%s.processing", filePath)
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4", procFilePath,
+	)
+
+	cmd.Run()
+
+	return procFilePath, nil
 }
